@@ -11,7 +11,7 @@ export interface BallSpec {
 }
 
 export const BALL_LIBRARY: Record<BallKey, BallSpec> = {
-  Standard: { key: 'Standard', radius: 8, restitution: 0.5, density: 1 },
+  Standard: { key: 'Standard', radius: 12, restitution: 0.5, density: 1 },
   Heavy: { key: 'Heavy', radius: 10, restitution: 0.2, density: 1.2 },
   Bouncy: { key: 'Bouncy', radius: 7, restitution: 0.85, density: 0.9 },
   Cluster: {

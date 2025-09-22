@@ -16,6 +16,7 @@ import {
 } from './state';
 import { createHud } from './ui/hud';
 import { createUpgradePanel } from './ui/upgrades';
+import { createPauseOverlay } from './ui/pauseOverlay';
 
 const seed = new Date().toISOString().slice(0, 10);
 const state = createInitialState(seed);
@@ -36,6 +37,8 @@ app.appendChild(layout);
 
 const hud = createHud(boardContainer);
 const upgrades = createUpgradePanel(app);
+const pauseOverlay = createPauseOverlay(app);
+let pauseMenuVisible = false;
 
 hud.update(state);
 
@@ -50,6 +53,13 @@ const boardSystem = new BoardSystem({
     handleRoundComplete();
   },
 });
+
+pauseOverlay.onResume(() => {
+  setPauseMenuVisible(false);
+});
+
+setPauseMenuVisible(true);
+setupInputHandlers();
 
 function handlePegHit(event: PegCollisionEvent): void {
   if (state.phase !== 'drop') return;
@@ -147,8 +157,69 @@ function applyUpgrade(card: UpgradeCard): void {
 function beginNextRound(): void {
   startNextRound(state);
   boardSystem.resetForNextRound();
-  boardSystem.setPaused(false);
+  boardSystem.setPaused(pauseMenuVisible);
   pipeSystem.resetSystem();
   hud.update(state);
   hud.setPhase('drop');
+}
+
+function setupInputHandlers(): void {
+  boardContainer.addEventListener('pointermove', (event) => {
+    if (pauseMenuVisible) return;
+    boardSystem.setAimX(getBoardRelativeX(event));
+  });
+
+  boardContainer.addEventListener('pointerdown', (event) => {
+    if (pauseMenuVisible) return;
+    if (event.button !== 0 && event.pointerType !== 'touch') return;
+    const x = getBoardRelativeX(event);
+    boardSystem.setAimX(x);
+    attemptDrop(x);
+  });
+
+  window.addEventListener('keydown', handleKeyDown);
+}
+
+function handleKeyDown(event: KeyboardEvent): void {
+  const key = event.key;
+  if (key === 'Escape' || key === 'Esc' || key === 'p' || key === 'P') {
+    event.preventDefault();
+    togglePauseMenu();
+    return;
+  }
+
+  if (event.code === 'Space') {
+    if (event.repeat) return;
+    event.preventDefault();
+    attemptDrop();
+  }
+}
+
+function attemptDrop(x?: number): void {
+  if (pauseMenuVisible) return;
+  if (state.phase !== 'drop') return;
+  boardSystem.tryDropBallAt(x);
+}
+
+function togglePauseMenu(): void {
+  setPauseMenuVisible(!pauseMenuVisible);
+}
+
+function setPauseMenuVisible(visible: boolean): void {
+  if (pauseMenuVisible === visible) return;
+  pauseMenuVisible = visible;
+  if (visible) {
+    pauseOverlay.show();
+    boardSystem.setPaused(true);
+  } else {
+    pauseOverlay.hide();
+    if (state.phase === 'drop') {
+      boardSystem.setPaused(false);
+    }
+  }
+}
+
+function getBoardRelativeX(event: PointerEvent | MouseEvent): number {
+  const rect = boardContainer.getBoundingClientRect();
+  return event.clientX - rect.left;
 }

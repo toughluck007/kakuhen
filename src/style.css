@@ -137,6 +137,104 @@ body {
   opacity: 0.8;
 }
 
+.pause-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2, 12, 24, 0.78);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+  z-index: 20;
+}
+
+.pause-overlay.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.pause-panel {
+  background: rgba(6, 22, 43, 0.95);
+  border: 1px solid rgba(140, 200, 255, 0.3);
+  border-radius: 16px;
+  padding: 2rem;
+  width: min(420px, 90vw);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+}
+
+.pause-panel h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.75rem;
+  color: #9fe8ff;
+}
+
+.pause-panel h3 {
+  margin: 1.5rem 0 0.75rem;
+  font-size: 1rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #d4f4ff;
+}
+
+.pause-panel p {
+  margin: 0.5rem 0;
+  line-height: 1.5;
+  opacity: 0.85;
+}
+
+.control-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.5rem 1.25rem;
+  margin: 0;
+  padding: 0;
+}
+
+.control-list dt {
+  font-weight: 600;
+  color: #9fe8ff;
+}
+
+.control-list dd {
+  margin: 0;
+  opacity: 0.8;
+}
+
+.pause-panel button {
+  margin-top: 1.75rem;
+  padding: 0.65rem 1.5rem;
+  border-radius: 999px;
+  border: 1px solid rgba(150, 220, 255, 0.7);
+  background: rgba(20, 70, 120, 0.6);
+  color: #eaffff;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+}
+
+.pause-panel button:hover {
+  background: rgba(45, 120, 200, 0.7);
+  border-color: rgba(220, 255, 255, 0.9);
+  transform: translateY(-1px);
+}
+
+.pause-panel button:active {
+  transform: translateY(1px);
+}
+
+.pause-hint {
+  font-size: 0.8rem;
+  opacity: 0.7;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 @media (max-width: 900px) {
   .main-layout {
     grid-template-columns: 1fr;
