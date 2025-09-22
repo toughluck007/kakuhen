@@ -30,6 +30,9 @@ export interface BoardSystemOptions {
 }
 
 const BASE_DROPS_PER_ROUND = 6;
+const SLOT_COUNT = 6;
+const SLOT_WALL_THICKNESS = 16;
+const SLOT_SENSOR_HEIGHT = 44;
 
 export class BoardSystem {
   private readonly container: HTMLElement;
@@ -44,6 +47,9 @@ export class BoardSystem {
   private balls: BallEntity[] = [];
   private dropCount = 0;
   private dropCooldown = 0;
+  private aimX = this.width / 2;
+  private slotWalls: Body[] = [];
+  private slotSensors: Array<{ body: Body; index: number }> = [];
   private paused = false;
   private roundCompleteSignalled = false;
   private lastTimestamp = performance.now();
@@ -57,6 +63,7 @@ export class BoardSystem {
 
     this.buildBoundaries();
     this.regeneratePegs();
+    this.rebuildSlots();
     this.bindCollisions();
     this.createSketch();
   }
@@ -67,10 +74,11 @@ export class BoardSystem {
 
   resetForNextRound(): void {
     this.dropCount = 0;
-    this.dropCooldown = 0.2;
+    this.dropCooldown = 0;
     this.roundCompleteSignalled = false;
     this.clearBalls();
     this.regeneratePegs();
+    this.aimX = this.clampAim(this.width / 2);
   }
 
   updateLayout(): void {
@@ -78,8 +86,10 @@ export class BoardSystem {
     this.height = this.container.clientHeight || this.height;
     this.repositionWalls();
     this.regeneratePegs();
+    this.rebuildSlots();
     this.dropCount = 0;
     this.roundCompleteSignalled = false;
+    this.aimX = this.clampAim(this.aimX);
   }
 
   private createSketch(): void {
@@ -101,6 +111,8 @@ export class BoardSystem {
         self.height = newHeight;
         p.resizeCanvas(newWidth, newHeight);
         self.repositionWalls();
+        self.rebuildSlots();
+        self.aimX = self.clampAim(self.aimX);
       };
 
       p.draw = () => {
@@ -116,24 +128,13 @@ export class BoardSystem {
   private update(dt: number): void {
     if (!this.paused) {
       Engine.update(this.engine, dt * 1000);
-      this.dropCooldown -= dt;
+      this.dropCooldown = Math.max(0, this.dropCooldown - dt);
     }
 
     this.cullBalls();
 
     const targetDrops = this.getDropsPerRound();
-    if (!this.paused && this.dropCount < targetDrops && this.dropCooldown <= 0 && this.balls.length === 0) {
-      this.spawnBall();
-      this.dropCount += 1;
-      this.dropCooldown = 1.2;
-    }
-
-    if (
-      !this.paused &&
-      this.dropCount >= targetDrops &&
-      this.balls.length === 0 &&
-      !this.roundCompleteSignalled
-    ) {
+    if (!this.paused && this.dropCount >= targetDrops && this.balls.length === 0 && !this.roundCompleteSignalled) {
       this.roundCompleteSignalled = true;
       this.options.onRoundComplete();
     }
@@ -142,8 +143,10 @@ export class BoardSystem {
   private render(p: p5): void {
     p.background(5, 12, 24);
     this.drawBackplate(p);
+    this.drawSlots(p);
     this.drawPegs(p);
     this.drawBalls(p);
+    this.drawAimGuide(p);
     this.drawDropMeter(p);
   }
 
@@ -156,6 +159,23 @@ export class BoardSystem {
       p.noStroke();
       p.fill(12 + t * 40, 45 + t * 10, 92 + t * 8, alpha);
       p.rect(0, (this.height / gradientSteps) * i, this.width, this.height / gradientSteps + 2);
+    }
+    p.pop();
+  }
+
+  private drawSlots(p: p5): void {
+    const slotDepth = this.getSlotDepth();
+    if (slotDepth <= 0) return;
+    const startY = this.height - slotDepth;
+    p.push();
+    p.noStroke();
+    p.fill(8, 24, 48, 180);
+    p.rect(0, startY, this.width, slotDepth);
+    p.stroke(70, 140, 220, 180);
+    p.strokeWeight(2);
+    for (let i = 1; i < SLOT_COUNT; i += 1) {
+      const x = (this.width / SLOT_COUNT) * i;
+      p.line(x, startY + 6, x, this.height - 6);
     }
     p.pop();
   }
@@ -173,6 +193,28 @@ export class BoardSystem {
       p.fill(250, 250, 250, 120);
       p.circle(x + radius * 0.3, y - radius * 0.3, radius * 0.6);
     }
+  }
+
+  private drawAimGuide(p: p5): void {
+    if (this.options.state.phase !== 'drop') return;
+    if (this.dropCount >= this.getDropsPerRound()) return;
+    if (this.balls.length > 0) return;
+
+    const radius = this.getBallRadius();
+    const x = this.clampAim(this.aimX);
+    const top = Math.min(this.height * 0.12, radius * 3);
+    const bottom = this.height * 0.22;
+    const canDrop = this.canDropBall();
+    const strokeColor = canDrop ? [190, 240, 255, 220] : [120, 160, 200, 120];
+
+    p.push();
+    p.stroke(strokeColor[0], strokeColor[1], strokeColor[2], strokeColor[3]);
+    p.strokeWeight(2);
+    p.line(x, top - radius * 0.6, x, bottom);
+    p.noStroke();
+    p.fill(strokeColor[0], strokeColor[1], strokeColor[2], strokeColor[3]);
+    p.circle(x, top - radius * 0.6, radius * 2.2);
+    p.pop();
   }
 
   private drawBalls(p: p5): void {
@@ -211,22 +253,23 @@ export class BoardSystem {
     p.pop();
   }
 
-  private spawnBall(): void {
-    const roll = this.options.state.rng.quick();
-    const x = this.width * 0.2 + roll * this.width * 0.6;
-    const ball = createBall(DEFAULT_BALL, { x, y: this.height * 0.05 });
+  private spawnBallAt(x: number): void {
+    const clamped = this.clampAim(x);
+    const ball = createBall(DEFAULT_BALL, { x: clamped, y: this.height * 0.05 });
     World.addBody(this.world, ball.body);
     this.balls.push(ball);
   }
 
   private cullBalls(): void {
-    this.balls = this.balls.filter((ball) => {
+    const remaining: BallEntity[] = [];
+    for (const ball of this.balls) {
       if (ball.body.position.y > this.height + 120) {
         Composite.remove(this.world, ball.body);
-        return false;
+      } else {
+        remaining.push(ball);
       }
-      return true;
-    });
+    }
+    this.balls = remaining;
   }
 
   private clearBalls(): void {
@@ -234,6 +277,11 @@ export class BoardSystem {
       Composite.remove(this.world, ball.body);
     }
     this.balls = [];
+  }
+
+  private removeBall(target: BallEntity): void {
+    Composite.remove(this.world, target.body);
+    this.balls = this.balls.filter((ball) => ball !== target);
   }
 
   private getDropsPerRound(): number {
@@ -264,6 +312,48 @@ export class BoardSystem {
     Body.setPosition(this.walls[0], Vector.create(this.width / 2, this.height + 40));
     Body.setPosition(this.walls[1], Vector.create(-40, this.height / 2));
     Body.setPosition(this.walls[2], Vector.create(this.width + 40, this.height / 2));
+  }
+
+  private rebuildSlots(): void {
+    for (const wall of this.slotWalls) {
+      Composite.remove(this.world, wall);
+    }
+    for (const sensor of this.slotSensors) {
+      Composite.remove(this.world, sensor.body);
+    }
+    this.slotWalls = [];
+    this.slotSensors = [];
+
+    const slotDepth = this.getSlotDepth();
+    if (slotDepth <= 0) return;
+    const baseY = this.height - slotDepth / 2;
+    const slotWidth = this.width / SLOT_COUNT;
+
+    for (let i = 0; i <= SLOT_COUNT; i += 1) {
+      const x = slotWidth * i;
+      const wall = Bodies.rectangle(x, baseY, SLOT_WALL_THICKNESS, slotDepth, {
+        isStatic: true,
+        label: 'slot-wall',
+      });
+      this.slotWalls.push(wall);
+      World.addBody(this.world, wall);
+    }
+
+    for (let i = 0; i < SLOT_COUNT; i += 1) {
+      const x = slotWidth * (i + 0.5);
+      const sensorWidth = Math.max(24, slotWidth - SLOT_WALL_THICKNESS * 1.4);
+      const sensorY = this.height - SLOT_SENSOR_HEIGHT / 2 - 4;
+      const sensor = Bodies.rectangle(x, sensorY, sensorWidth, SLOT_SENSOR_HEIGHT, {
+        isStatic: true,
+        isSensor: true,
+        label: 'slot-sensor',
+      });
+      const plugin = (sensor as Body & { plugin?: Record<string, unknown> }).plugin ?? {};
+      plugin.slotIndex = i;
+      (sensor as Body & { plugin: Record<string, unknown> }).plugin = plugin;
+      this.slotSensors.push({ body: sensor, index: i });
+      World.addBody(this.world, sensor);
+    }
   }
 
   private regeneratePegs(): void {
@@ -297,8 +387,55 @@ export class BoardSystem {
             velocity: { x: velocity.x, y: velocity.y },
           });
         }
+
+        const slotIndex = this.extractSlotSensor(bodyA) ?? this.extractSlotSensor(bodyB);
+        if (slotIndex != null && ballEntity) {
+          this.handleSlotCapture(slotIndex, ballEntity);
+        }
       }
     });
+  }
+
+  tryDropBallAt(x?: number): boolean {
+    if (this.paused) return false;
+    if (this.options.state.phase !== 'drop') return false;
+    if (this.balls.length > 0) return false;
+    if (this.dropCooldown > 0) return false;
+    const targetDrops = this.getDropsPerRound();
+    if (this.dropCount >= targetDrops) return false;
+
+    const spawnX = this.clampAim(x ?? this.aimX);
+    this.spawnBallAt(spawnX);
+    this.dropCount += 1;
+    this.dropCooldown = 0.5;
+    return true;
+  }
+
+  setAimX(x: number): void {
+    this.aimX = this.clampAim(x);
+  }
+
+  private canDropBall(): boolean {
+    if (this.paused) return false;
+    if (this.options.state.phase !== 'drop') return false;
+    if (this.dropCooldown > 0) return false;
+    if (this.balls.length > 0) return false;
+    if (this.dropCount >= this.getDropsPerRound()) return false;
+    return true;
+  }
+
+  private clampAim(x: number): number {
+    const radius = this.getBallRadius();
+    const margin = radius + 8;
+    return Math.min(this.width - margin, Math.max(margin, x));
+  }
+
+  private getBallRadius(): number {
+    return DEFAULT_BALL.radius;
+  }
+
+  private handleSlotCapture(_slot: number, ball: BallEntity): void {
+    this.removeBall(ball);
   }
 
   private extractPeg(body: Body): PegEntity | null {
@@ -309,6 +446,17 @@ export class BoardSystem {
   private extractBall(body: Body): BallEntity | null {
     if (body.label !== 'ball') return null;
     return this.balls.find((ball) => ball.body === body) ?? null;
+  }
+
+  private extractSlotSensor(body: Body): number | null {
+    if (body.label !== 'slot-sensor') return null;
+    const plugin = (body as Body & { plugin?: Record<string, unknown> }).plugin;
+    const index = plugin?.slotIndex;
+    return typeof index === 'number' ? index : null;
+  }
+
+  private getSlotDepth(): number {
+    return Math.min(220, this.height * 0.22);
   }
 }
 
